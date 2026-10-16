@@ -1,0 +1,73 @@
+/* Global CSS Reset & Base Design System */
+:root {
+  --bg-deep: #07090e;
+  --bg-card: #0f141f;
+  --bg-phone-outer: #121622;
+  --bg-phone-screen: #0a0d14;
+  --border-phone: #242c3d;
+  --border-subtle: #1e2638;
+  
+  --primary: #3b82f6;
+  --primary-glow: rgba(59, 130, 246, 0.4);
+  --accent-cyan: #06b6d4;
+  
+  --safe-green: #10b981;
+  --safe-green-glow: rgba(16, 185, 129, 0.35);
+  --warning-yellow: #f59e0b;
+  --warning-yellow-glow: rgba(245, 158, 11, 0.35);
+  --danger-red: #ef4444;
+  --danger-red-glow: rgba(239, 68, 68, 0.45);
+  
+  --text-main: #f8fafc;
+  --text-muted: #94a3b8;
+  --text-subtle: #64748b;
+  
+  --font-main: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+  
+  --phone-width: 340px;
+  --phone-height: 680px;
+  --phone-radius: 44px;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-main);
+  background-color: var(--bg-deep);
+  color: var(--text-main);
+  min-height: 100vh;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  outline: none;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+input {
+  font-family: inherit;
+  outline: none;
+}
+
+/* Scrollbar styles */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-deep);
+}
+::-webkit-scrollbar-thumb {
+  background: #2a3447;
+  border-radius: 4px;
+}
