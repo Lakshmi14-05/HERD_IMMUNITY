@@ -15,7 +15,7 @@ REPORTER_C="device_C_${RAND}"
 
 # 1. Health check
 echo -n "[1/6] Testing GET /health ... "
-HEALTH=$(curl -s -f "$BASE_URL/health")
+HEALTH=$(curl -s -f "$BASE_URL/health" | tr -d '\r')
 if [ "$HEALTH" = "ok" ]; then
   echo "PASSED (response: '$HEALTH')"
 else

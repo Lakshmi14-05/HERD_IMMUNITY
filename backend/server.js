@@ -23,6 +23,23 @@ const io = new Server(server, {
 // Socket.IO client connection logging
 io.on('connection', (socket) => {
   console.log(`[Socket.IO] Client connected: ${socket.id}`);
+
+  // Compatibility listener: handle socket.emit('report_scam') from frontend if called
+  socket.on('report_scam', async (payload) => {
+    try {
+      const rawId = payload?.id || payload?.upiString || payload?.vpa;
+      const reporterId = payload?.reporterId || `socket_${socket.id}`;
+      if (rawId && typeof rawId === 'string' && rawId.trim()) {
+        const allowed = await checkRateLimit(reporterId);
+        if (allowed) {
+          await processReport(rawId.trim(), reporterId);
+        }
+      }
+    } catch (err) {
+      console.error('[Socket.IO report_scam] Error:', err);
+    }
+  });
+
   socket.on('disconnect', () => {
     console.log(`[Socket.IO] Client disconnected: ${socket.id}`);
   });
@@ -42,7 +59,16 @@ redisSub.on('message', (channel, message) => {
     try {
       const payload = JSON.parse(message);
       console.log('[Redis Sub] Relaying risk flag to Socket.IO:', payload);
+
+      // Canonical event: "flag" with exact required contract
       io.emit('flag', payload);
+
+      // Compatibility event for frontend mock listener: "fraud_broadcast"
+      io.emit('fraud_broadcast', {
+        ...payload,
+        reportersCount: payload.reports,
+        timestamp: payload.ts * 1000,
+      });
     } catch (err) {
       console.error('[Redis Sub] Failed to parse message on "risk":', err);
     }
@@ -54,17 +80,19 @@ app.get('/health', (req, res) => {
   res.type('text/plain').status(200).send('ok');
 });
 
-// POST /report
-app.post('/report', async (req, res) => {
+// Helper handler for report endpoints
+async function handleReport(req, res) {
   try {
-    const { id, reporterId } = req.body || {};
+    const rawId = req.body?.id || req.body?.upiString || req.body?.vpa;
+    const rawReporterId =
+      req.body?.reporterId || (req.ip ? `device_${req.ip.replace(/[^a-zA-Z0-9]/g, '_')}` : 'anonymous');
 
     // Validate that both are non-empty strings, otherwise 400
     if (
-      typeof id !== 'string' ||
-      !id.trim() ||
-      typeof reporterId !== 'string' ||
-      !reporterId.trim()
+      typeof rawId !== 'string' ||
+      !rawId.trim() ||
+      typeof rawReporterId !== 'string' ||
+      !rawReporterId.trim()
     ) {
       return res.status(400).json({
         ok: false,
@@ -72,8 +100,8 @@ app.post('/report', async (req, res) => {
       });
     }
 
-    const cleanId = id.trim();
-    const cleanReporterId = reporterId.trim();
+    const cleanId = rawId.trim();
+    const cleanReporterId = rawReporterId.trim();
 
     // Check rate limit before anything else
     const allowed = await checkRateLimit(cleanReporterId);
@@ -85,10 +113,16 @@ app.post('/report', async (req, res) => {
     const result = await processReport(cleanId, cleanReporterId);
     return res.status(200).json(result);
   } catch (err) {
-    console.error('[POST /report] Internal Error:', err);
+    console.error('[Report Handler] Internal Error:', err);
     return res.status(500).json({ ok: false, error: 'internal_server_error' });
   }
-});
+}
+
+// POST /report (Canonical API Contract)
+app.post('/report', handleReport);
+
+// POST /api/report (Compatibility alias for frontend)
+app.post('/api/report', handleReport);
 
 // GET /flags - returns [{hash, level, reports, ts}] for all active flags
 app.get('/flags', async (req, res) => {
@@ -98,6 +132,28 @@ app.get('/flags', async (req, res) => {
   } catch (err) {
     console.error('[GET /flags] Internal Error:', err);
     return res.status(500).json({ ok: false, error: 'internal_server_error' });
+  }
+});
+
+// GET /api/check (Compatibility endpoint for frontend checkFraudStatus)
+app.get('/api/check', async (req, res) => {
+  try {
+    const { hash } = req.query;
+    const flags = await getActiveFlags();
+    const match = flags.find((f) => f.hash === hash);
+    if (!match) {
+      return res.status(200).json({ isScam: false, level: 'safe', reportersCount: 0 });
+    }
+    return res.status(200).json({
+      isScam: true,
+      level: match.level,
+      reportersCount: match.reports,
+      reportedAt: match.ts * 1000,
+      hash: match.hash,
+    });
+  } catch (err) {
+    console.error('[GET /api/check] Internal Error:', err);
+    return res.status(500).json({ isScam: false, level: 'safe', reportersCount: 0 });
   }
 });
 
