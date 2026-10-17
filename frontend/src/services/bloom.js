@@ -1,5 +1,5 @@
 /**
- * Bloom Filter Service (~50KB Uint8Array bit array, 7 hash functions)
+ * Client-Side Bloom Filter Service (~50KB Uint8Array bit array, 7 hash functions)
  * Double hashing: gi(x) = (h1(x) + i * h2(x)) mod M
  * Methods: add(hash), has(hash)
  * Keeps a Map: hash -> { level, reports, ts }
@@ -48,7 +48,7 @@ export class BloomFilter {
   }
 
   /**
-   * Adds a lowercase hex hash to the Bloom filter
+   * Adds a hex hash to the Bloom filter
    * @param {string} hash 
    */
   add(hash) {
@@ -112,7 +112,7 @@ export function addFlag(hash, details = null) {
 
   if (details) {
     hashDetailsMap.set(key, {
-      level: details.level || 'soft',
+      level: details.level || (details.reports >= 3 ? 'hard' : 'soft'),
       reports: Number(details.reports || 1),
       ts: Number(details.ts || Math.floor(Date.now() / 1000))
     });
@@ -147,17 +147,12 @@ export function resetBloomStorage() {
   hashDetailsMap.clear();
 }
 
-// Compatibility wrappers for existing components
-export const addHashToFilter = (filter, hash, meta) => {
-  if (filter && typeof filter.add === 'function') filter.add(hash);
-  else localDeviceBloom.add(hash);
-  if (meta && hash) {
-    hashDetailsMap.set(String(hash).trim().toLowerCase(), meta);
-  }
+export default {
+  BloomFilter,
+  localDeviceBloom,
+  hashDetailsMap,
+  addFlag,
+  hasFlag,
+  getFlagDetails,
+  resetBloomStorage
 };
-export const hasHashInFilter = (filter, hash) => {
-  if (filter && typeof filter.has === 'function') return filter.has(hash);
-  return localDeviceBloom.has(hash);
-};
-export const createBloomFilter = () => new BloomFilter(400000, 7);
-export const hashMetadataMap = hashDetailsMap;

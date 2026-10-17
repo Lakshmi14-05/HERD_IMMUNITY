@@ -1,15 +1,16 @@
 # Herd Immunity — Frontend
 
-Real-time decentralized UPI fraud warning network demo. Runs two interactive mobile phone panes side-by-side: **Victim A (Reporter Node)** and **Victim B (Scanner Node)** with decentralized SHA-256 pseudonymization and zero-latency on-device Bloom filter edge verification.
+Real-time decentralized UPI fraud warning network application. Runs multi-device interactive mobile phone panes side-by-side (Device A, Device B, and up to 4 devices via "+ Add device") connecting directly to the real Node.js + Redis backend.
 
 ---
 
 ## ⚡ Tech Stack
 
-* **React 18 + Vite 6** (JavaScript, zero heavy CSS component libraries)
-* **Web Crypto API (`crypto.subtle`)**: Native browser SHA-256 cryptographic hashing matching Node's `crypto`
+* **React 18 + Vite 6** (Zero heavy CSS component libraries)
+* **jsQR**: Fast client-side QR code decoding in the browser (Canvas -> ImageData -> jsQR)
+* **Web Crypto API (`crypto.subtle`)**: Native browser SHA-256 cryptographic hashing matching Node's `crypto` exactly
 * **On-Device Bloom Filter**: ~50KB (`Uint8Array` 400,000 bits), 7 double-hashed functions ($g_i(x) = (h_1(x) + i \cdot h_2(x)) \pmod M$) with zero-latency edge checks
-* **Socket.IO Client**: Real-time event synchronization with WebSocket + polling fallback
+* **Socket.IO Client**: Real-time event synchronization over WebSockets with polling fallback
 
 ---
 
@@ -22,7 +23,6 @@ npm install
 ```
 
 ### 2. Configure Environment (.env)
-Copy the example file:
 ```bash
 cp .env.example .env
 ```
@@ -30,7 +30,6 @@ cp .env.example .env
 | Variable | Default | Description |
 |---|---|---|
 | `VITE_API_URL` | `http://localhost:3000` | Backend REST & Socket.IO URL |
-| `VITE_MOCK` | `true` | Set to `false` when running against a live backend |
 
 ### 3. Start Development Server
 ```bash
@@ -40,33 +39,41 @@ Open **`http://localhost:5173`** in your browser.
 
 ---
 
-## 🎬 Hackathon Demo Features
+## 📱 Features & Device Flow
 
-1. **Reporter Selector Dropdown**:
-   * Switch between `deviceA`, `deviceC`, `deviceD`, and `deviceE` to simulate reports from distinct community members.
-   * Demonstrates collective intelligence transitioning risk tiers from soft to hard.
-2. **Live In-Place Upgrade**:
-   * If Device B already has the yellow cautionary screen open, submitting the 3rd distinct report dynamically transitions the open screen to the red **"SCAM DETECTED"** screen in real time without having to re-scan.
-3. **Simulate Offline Mode (Edge Shield)**:
-   * Toggle **"Simulate offline"** on Device B to disconnect network calls.
-   * Scanning QR codes continues to detect fraudulent VPAs instantly from the local on-device Bloom filter with the label: `⚡ Checked locally. No server call (100% Offline)`.
-4. **Render Free-Tier Wake-Up Handling**:
-   * When `VITE_MOCK=false`, the frontend polls `GET /health`. If the sleeping free-tier instance takes $>3\text{s}$, a non-blocking banner *"Backend waking up, please wait..."* appears until the instance wakes, then auto-connects Socket.IO and pre-loads flags via `GET /flags`.
+1. **Multi-Device Support**:
+   * Device A and Device B open by default.
+   * Click **"+ Add device"** to spawn Device C and Device D (up to 4 devices total).
+   * Each device has its own fixed `reporterId` (`deviceA`, `deviceB`, `deviceC`, `deviceD`).
+2. **In-Browser QR Decoding**:
+   * **Upload QR Image**: Select any image file (`image/*`). Decoded client-side with `jsQR`.
+   * **Use Camera**: Live webcam viewfinder with frame scanner.
+   * **Sample QRs**: 1-click loaders for `fake-shop-1.png`, `fake-shop-2.png`, and `safe-store.png`.
+3. **Report as Scam**:
+   * Sends `POST {VITE_API_URL}/report` with `{ id: <decoded text>, reporterId: <device id> }`.
+   * Handles rate limits (429) and network errors with friendly alerts.
+4. **Zero-Network Local Check**:
+   * Computes `sha256(qrText.trim())` via Web Crypto API.
+   * Checks the on-device Bloom filter first with **no network calls**:
+     - **Safe**: Green *"Not reported. Looks safe"*.
+     - **Soft (1–2 reports)**: Yellow *"Proceed with caution. Reported by N user"*.
+     - **Hard (3+ reports)**: Red *"SCAM DETECTED, reported by N users"*.
+   * If flagged in Bloom without cached metadata (possible false-positive), confirms with `GET /api/check?hash=<hash>`.
+5. **Real-Time Live Updates**:
+   * All devices listen to the Socket.IO `"flag"` event (`{ hash, level, reports, ts }`).
+   * If a device already displays a result for that QR code, it updates in place from soft to hard live without having to re-scan, with an **"Updated live via Socket.IO"** indicator.
 
 ---
 
 ## 🌐 Vercel Deployment Guide
 
-To deploy the frontend to Vercel:
-
-1. **Import the repository** into Vercel.
-2. In the Project Configuration settings:
+1. Import the repository into your Vercel Dashboard.
+2. In the **Project Configuration** settings:
    * **Framework Preset**: `Vite`
-   * **Root Directory**: `frontend` *(click Edit and select `frontend`)*
+   * **Root Directory**: `frontend` *(click **Edit** and choose `frontend`)*
    * **Build Command**: `npm run build`
    * **Output Directory**: `dist`
    * **Install Command**: `npm install`
 3. Add **Environment Variables**:
    * `VITE_API_URL` = `<your-backend-url>` (e.g., `https://herd-immunity-backend.onrender.com`)
-   * `VITE_MOCK` = `false`
-4. Click **Deploy**. Vercel will build the SPA using `vercel.json` rewrites for seamless client-side routing.
+4. Click **Deploy**.
