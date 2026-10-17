@@ -1,5 +1,8 @@
 # HERD_IMMUNITY
 Herd Immunity is a real-time UPI fraud prevention network that shares suspicious QR codes and VPAs across users within seconds. Using Redis/Kafka, on-device Bloom filters, and community-driven reports, it delivers instant risk warnings, works offline, and protects users through collective intelligence and privacy-preserving hashing.
+
+
+
 #BACKEND
 Step 1: Upstash (Free Cloud Redis)
 Go to https://console.upstash.com/ and sign up or log in.
@@ -30,7 +33,9 @@ bash test.sh https://herd-immunity-backend.onrender.com
 ⚠️ Render Free Tier Note: Free tier web services go to sleep after 15 minutes of inactivity. The first request after sleeping may take 30–50 seconds to wake up the server.
 
 🤝 Teammate Integration Guide
-React + Vite Connection Example:
+React + Vite Connection 
+
+Example:
 import { io } from 'socket.io-client';
 
 const BACKEND_URL = 'https://herd-immunity-backend.onrender.com'; // or http://localhost:3000 for local dev
