@@ -1,11 +1,14 @@
 import React, { useState } from 'react';
-import { submitFraudReport } from '../services/api';
-import { hashUpiPayload } from '../services/hash';
+import { reportFraud } from '../services/api';
+import { sha256 } from '../services/hash';
+import { CONFIG } from '../config';
 
 export default function DeviceA({ onReportTriggered }) {
   const [upiString, setUpiString] = useState('upi://pay?pa=scammer@upi&pn=Fake%20Shop');
+  const [reporterId, setReporterId] = useState('deviceA');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [reportResult, setReportResult] = useState(null);
+  const [errorMessage, setErrorMessage] = useState(null);
   const [hashPreview, setHashPreview] = useState('');
 
   const handleReport = async (e) => {
@@ -13,25 +16,37 @@ export default function DeviceA({ onReportTriggered }) {
     if (!upiString.trim()) return;
 
     setIsSubmitting(true);
+    setErrorMessage(null);
+
     try {
-      const hashInfo = await hashUpiPayload(upiString);
-      setHashPreview(hashInfo.hash.slice(0, 16) + '...');
+      const hash = await sha256(upiString);
+      setHashPreview(hash.slice(0, 16) + '...');
 
-      const result = await submitFraudReport(upiString);
-      const timestampStr = new Date(result.timestamp || Date.now()).toLocaleTimeString();
+      // Call POST /report with { id: upiString, reporterId }
+      const result = await reportFraud(upiString, reporterId);
 
+      const timestampStr = new Date().toLocaleTimeString();
       setReportResult({
-        success: true,
+        ok: result.ok !== false,
         timestamp: timestampStr,
-        rawTimestamp: result.timestamp,
-        reportersCount: result.reportersCount || 1
+        hash: result.hash || hash,
+        level: result.level || 'soft',
+        reports: result.reports || 1,
+        reporterId
       });
 
       if (onReportTriggered) {
         onReportTriggered(result);
       }
     } catch (err) {
-      console.error('Report error:', err);
+      console.error('[DeviceA] Report error:', err);
+      let friendlyMsg = 'Report failed: ' + (err.message || 'Network error');
+      if (err.message && err.message.includes('Rate limit')) {
+        friendlyMsg = '⚠️ Rate limited: Please wait a few seconds before reporting again.';
+      } else if (err.message && (err.message.includes('Failed to fetch') || err.message.includes('unreachable'))) {
+        friendlyMsg = '📡 Backend unreachable: Ensure backend server is running on ' + CONFIG.apiUrl;
+      }
+      setErrorMessage(friendlyMsg);
     } finally {
       setIsSubmitting(false);
     }
@@ -39,6 +54,7 @@ export default function DeviceA({ onReportTriggered }) {
 
   const handleReset = () => {
     setReportResult(null);
+    setErrorMessage(null);
     setHashPreview('');
   };
 
@@ -53,7 +69,7 @@ export default function DeviceA({ onReportTriggered }) {
             <span className="app-subtitle">UPI 2.0 Secure Pay</span>
           </div>
         </div>
-        <div className="app-vpa-pill">pa: victim1@upi</div>
+        <div className="app-vpa-pill">node: {reporterId}</div>
       </div>
 
       <div className="app-body">
@@ -72,19 +88,15 @@ export default function DeviceA({ onReportTriggered }) {
           <div className="qr-box">
             <svg className="qr-svg" viewBox="0 0 140 140" width="140" height="140">
               <rect width="140" height="140" fill="#ffffff" rx="12" />
-              {/* Corner 1 */}
               <rect x="14" y="14" width="34" height="34" fill="#0f172a" rx="4" />
               <rect x="20" y="20" width="22" height="22" fill="#ffffff" rx="2" />
               <rect x="25" y="25" width="12" height="12" fill="#0f172a" rx="1" />
-              {/* Corner 2 */}
               <rect x="92" y="14" width="34" height="34" fill="#0f172a" rx="4" />
               <rect x="98" y="20" width="22" height="22" fill="#ffffff" rx="2" />
               <rect x="103" y="25" width="12" height="12" fill="#0f172a" rx="1" />
-              {/* Corner 3 */}
               <rect x="14" y="92" width="34" height="34" fill="#0f172a" rx="4" />
               <rect x="20" y="98" width="22" height="22" fill="#ffffff" rx="2" />
               <rect x="25" y="103" width="12" height="12" fill="#0f172a" rx="1" />
-              {/* Fake Data matrix blocks */}
               <rect x="58" y="18" width="8" height="8" fill="#0f172a" />
               <rect x="72" y="18" width="8" height="8" fill="#0f172a" />
               <rect x="58" y="32" width="16" height="8" fill="#0f172a" />
@@ -106,7 +118,7 @@ export default function DeviceA({ onReportTriggered }) {
           <span className="qr-hint">Scan with any UPI app to pay</span>
         </div>
 
-        {/* UPI Payload Input Form */}
+        {/* UPI Payload Form */}
         <form onSubmit={handleReport} className="upi-form">
           <label className="form-label" htmlFor="upi-string-input">
             UPI QR Payload:
@@ -124,6 +136,28 @@ export default function DeviceA({ onReportTriggered }) {
             />
           </div>
 
+          {/* Reporter Selector Dropdown */}
+          <div className="reporter-selector-group">
+            <label className="form-label" htmlFor="reporter-id-select">
+              Reporter Device ID:
+            </label>
+            <div className="select-wrapper">
+              <select
+                id="reporter-id-select"
+                className="reporter-select"
+                value={reporterId}
+                onChange={(e) => setReporterId(e.target.value)}
+              >
+                {CONFIG.reporterOptions.map((opt) => (
+                  <option key={opt} value={opt}>
+                    {opt} {opt === 'deviceA' ? '(Default)' : '(Peer reporter)'}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <span className="selector-hint">Switch IDs to simulate distinct user reports</span>
+          </div>
+
           {/* Action Button: Report Scam */}
           <button
             type="submit"
@@ -131,7 +165,7 @@ export default function DeviceA({ onReportTriggered }) {
             disabled={isSubmitting}
           >
             {isSubmitting ? (
-              <span className="btn-spinner">Broadcasting...</span>
+              <span className="btn-spinner">Broadcasting report...</span>
             ) : (
               <>
                 <span className="btn-icon">🚨</span>
@@ -141,7 +175,16 @@ export default function DeviceA({ onReportTriggered }) {
           </button>
         </form>
 
-        {/* Confirmation Banner */}
+        {/* Error Notification */}
+        {errorMessage && (
+          <div className="error-banner" role="alert">
+            <span className="error-icon">⚠️</span>
+            <div className="error-text">{errorMessage}</div>
+            <button type="button" className="error-dismiss" onClick={() => setErrorMessage(null)}>×</button>
+          </div>
+        )}
+
+        {/* Green Confirmation Banner for Device A */}
         {reportResult && (
           <div className="confirmation-card green-confirmation" role="alert">
             <div className="confirmation-header">
@@ -152,15 +195,16 @@ export default function DeviceA({ onReportTriggered }) {
               Timestamp: <span>{reportResult.timestamp}</span>
             </p>
             <div className="confirmation-meta">
-              <span className="badge-bloom">Bloom Sync Queued</span>
+              <span className="badge-bloom">Reporter: {reportResult.reporterId}</span>
+              <span className="badge-bloom">Tier: {reportResult.level.toUpperCase()} ({reportResult.reports} report{reportResult.reports > 1 ? 's' : ''})</span>
               {hashPreview && (
-                <span className="badge-hash" title="Privacy-preserving SHA-256 hash">
+                <span className="badge-hash" title="SHA-256 hash broadcast">
                   SHA-256: {hashPreview}
                 </span>
               )}
             </div>
             <button type="button" className="btn-text-dismiss" onClick={handleReset}>
-              Reset Device
+              Dismiss
             </button>
           </div>
         )}

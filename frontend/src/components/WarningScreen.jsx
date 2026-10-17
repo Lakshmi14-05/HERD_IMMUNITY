@@ -6,6 +6,8 @@ import React from 'react';
  * - Green "Looks safe. Pay"
  * - Yellow "Proceed with caution. Reported by 1 user"
  * - Red "SCAM DETECTED. Reported by N users, X seconds ago" with disabled Pay button
+ * - Shake & pulse animations on red hard detection
+ * - Includes: "Checked locally. No server call" (with offline indicator when offline)
  */
 export default function WarningScreen({
   level, // 'safe' | 'soft' | 'hard'
@@ -13,9 +15,17 @@ export default function WarningScreen({
   secondsAgo = 0,
   vpa = 'scammer@upi',
   merchantName = 'Fake Shop',
+  isOffline = false,
   onReset,
   onPay
 }) {
+  const localCheckBadge = (
+    <div className={`checked-locally-badge ${isOffline ? 'badge-offline-mode' : ''}`}>
+      <span className="badge-shield-icon">{isOffline ? '✈️' : '⚡'}</span>
+      <span>Checked locally. No server call {isOffline ? '(100% Offline)' : ''}</span>
+    </div>
+  );
+
   if (level === 'safe') {
     return (
       <div className="warning-screen screen-safe">
@@ -34,6 +44,8 @@ export default function WarningScreen({
         <p className="result-subtext">
           Zero fraud reports in decentralized network. On-device Bloom filter check passed.
         </p>
+
+        {localCheckBadge}
 
         <div className="payment-summary-box">
           <div className="payment-row">
@@ -77,11 +89,13 @@ export default function WarningScreen({
         </div>
 
         <h3 className="result-headline soft-title">
-          Proceed with caution. Reported by {reportersCount} user
+          Proceed with caution. Reported by {reportersCount} user{reportersCount > 1 ? 's' : ''}
         </h3>
         <p className="result-subtext">
           A peer device recently flagged this QR code as suspicious. Verify seller identity before continuing.
         </p>
+
+        {localCheckBadge}
 
         <div className="payment-summary-box warning-box">
           <div className="payment-row">
@@ -90,7 +104,7 @@ export default function WarningScreen({
           </div>
           <div className="payment-row">
             <span className="summary-label">Risk Tier:</span>
-            <span className="summary-val risk-medium">Medium Risk (1 Peer Flag)</span>
+            <span className="summary-val risk-medium">Medium Risk ({reportersCount} Peer Flag{reportersCount > 1 ? 's' : ''})</span>
           </div>
         </div>
 
@@ -106,9 +120,9 @@ export default function WarningScreen({
     );
   }
 
-  // Level 'hard' (full red screen)
+  // Level 'hard' (full red screen with shake and pulse animations)
   return (
-    <div className="warning-screen screen-hard">
+    <div className="warning-screen screen-hard anim-shake-pulse">
       <div className="hazard-stripes" />
 
       <div className="screen-center-icon hard-icon-wrap pulse-danger">
@@ -137,6 +151,8 @@ export default function WarningScreen({
         High-confidence fraud match. Multiple peers reported unauthorized billing on this VPA.
       </p>
 
+      {localCheckBadge}
+
       <div className="payment-summary-box danger-box">
         <div className="payment-row">
           <span className="summary-label">Flagged VPA:</span>
@@ -149,7 +165,6 @@ export default function WarningScreen({
       </div>
 
       <div className="screen-actions">
-        {/* Disabled Pay button as required */}
         <button
           type="button"
           className="btn btn-disabled-pay"

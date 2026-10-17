@@ -1,38 +1,58 @@
 import React, { useState, useEffect } from 'react';
 import WarningScreen from './WarningScreen';
 import { networkService } from '../services/socket';
-import { addHashToFilter, hasHashInFilter, localDeviceBloom } from '../services/bloom';
-import { hashUpiPayload } from '../services/hash';
+import { hasFlag, getFlagDetails, addHashToFilter, localDeviceBloom } from '../services/bloom';
+import { sha256 } from '../services/hash';
 
 export default function DeviceB({
   activeFlag,
   onResetAll,
-  isScanning,
-  setIsScanning
+  connectionStatus = 'connected'
 }) {
   const [scanResult, setScanResult] = useState(null); // null | { level: 'safe'|'soft'|'hard', ... }
   const [secondsAgo, setSecondsAgo] = useState(0);
   const [simulatedScanning, setSimulatedScanning] = useState(false);
+  const [localConnStatus, setLocalConnStatus] = useState(connectionStatus);
+  const [isOffline, setIsOffline] = useState(false);
 
-  // When activeFlag is updated via network broadcast, insert hash into local Bloom filter
+  // Subscribe to connection status changes
+  useEffect(() => {
+    setLocalConnStatus(networkService.getConnectionStatus());
+    const unsubConn = networkService.on('connection_status', (status) => {
+      setLocalConnStatus(status);
+    });
+    const unsubOff = networkService.on('offline_toggled', (offline) => {
+      setIsOffline(offline);
+    });
+    return () => {
+      unsubConn();
+      unsubOff();
+    };
+  }, []);
+
+  // Update Bloom filter and metadata when activeFlag arrives
+  // Requirement 3: If Device B already has soft result open, live-update it to hard in place without pressing Scan again!
   useEffect(() => {
     if (activeFlag && activeFlag.hash) {
       addHashToFilter(localDeviceBloom, activeFlag.hash, {
         level: activeFlag.level,
-        reports: activeFlag.reportersCount,
+        reports: activeFlag.reports || activeFlag.reportersCount || 1,
         ts: activeFlag.reportedAt
+      });
+
+      // Requirement 3: Live update currently open scan result without needing to re-scan
+      setScanResult((prev) => {
+        if (!prev) return null;
+        const currentReports = activeFlag.reports || activeFlag.reportersCount || prev.reportersCount;
+        const isHardTier = activeFlag.level === 'hard' || currentReports >= 3;
+        return {
+          ...prev,
+          level: isHardTier ? 'hard' : (prev.level || 'soft'),
+          reportersCount: currentReports
+        };
       });
     }
   }, [activeFlag]);
-
-  // Reset scan result when demo is reset
-  useEffect(() => {
-    const unsub = networkService.on('reset_state', () => {
-      setScanResult(null);
-      setSecondsAgo(0);
-    });
-    return unsub;
-  }, []);
 
   // Real-time ticking counter for "Reported by N users, X seconds ago"
   useEffect(() => {
@@ -48,46 +68,69 @@ export default function DeviceB({
     return () => clearInterval(timer);
   }, [activeFlag]);
 
-  // Handle "Scan QR" action
+  // Reset scan result when demo is reset
+  useEffect(() => {
+    const unsub = networkService.on('reset_state', () => {
+      setScanResult(null);
+      setSecondsAgo(0);
+    });
+    return unsub;
+  }, []);
+
+  // Handle "Simulate offline" toggle
+  const handleToggleOffline = (checked) => {
+    setIsOffline(checked);
+    networkService.setOffline(checked);
+  };
+
+  // Handle "Scan QR" action (Requirement 4 & 5: Hash QR, check Bloom locally with NO network call, works offline)
   const handleScanQR = async () => {
     setSimulatedScanning(true);
 
     const upiString = 'upi://pay?pa=scammer@upi&pn=Fake%20Shop';
-    const { hash, vpa } = await hashUpiPayload(upiString);
+    // 1. Hash QR string via crypto.subtle (pure local calculation)
+    const hash = await sha256(upiString);
 
-    // Fast 300ms scanning animation
+    // Short visual laser animation for realistic scanner feedback
     setTimeout(() => {
       setSimulatedScanning(false);
 
-      // Check if hash matches in local bloom filter or activeFlag
-      const inBloom = hasHashInFilter(localDeviceBloom, hash);
+      // 2. Check the Bloom filter locally with NO network call (works 100% offline)
+      const isFlaggedInBloom = hasFlag(hash);
 
-      if (activeFlag && (activeFlag.hash === hash || inBloom)) {
+      if (isFlaggedInBloom) {
+        // 3. Look up Map for level, reports, ts
+        const details = getFlagDetails(hash);
+        const level = details ? details.level : (activeFlag ? activeFlag.level : 'soft');
+        const reports = details ? details.reports : (activeFlag ? (activeFlag.reports || activeFlag.reportersCount) : 1);
+
         setScanResult({
-          level: activeFlag.level || (activeFlag.reportersCount >= 3 ? 'hard' : 'soft'),
-          reportersCount: activeFlag.reportersCount || 1,
-          vpa: activeFlag.vpa || vpa,
+          level: (level === 'hard' || reports >= 3) ? 'hard' : 'soft',
+          reportersCount: reports,
+          vpa: 'scammer@upi',
           merchantName: 'Fake Shop'
         });
       } else {
-        // Not flagged yet -> Safe
+        // Not in Bloom filter -> Safe
         setScanResult({
           level: 'safe',
           reportersCount: 0,
-          vpa,
+          vpa: 'scammer@upi',
           merchantName: 'Fake Shop'
         });
       }
-    }, 450);
+    }, 380);
   };
 
   const handleResetScan = () => {
     setScanResult(null);
   };
 
+  const isConnected = !isOffline && localConnStatus === 'connected';
+
   return (
     <div className={`upi-app victim-b ${scanResult ? `mode-${scanResult.level}` : ''}`}>
-      {/* App Top Header */}
+      {/* App Top Header with Connection Status Dot */}
       <div className="app-header">
         <div className="app-branding">
           <div className="app-logo scanner-logo">🛡️</div>
@@ -96,11 +139,38 @@ export default function DeviceB({
             <span className="app-subtitle">Zero-Trust Peer Shield</span>
           </div>
         </div>
-        <div className="app-vpa-pill">pa: victim2@upi</div>
+
+        {/* Small Connection Status Dot on Device B pane */}
+        <div
+          className={`connection-pill ${isOffline ? 'conn-offline-mode' : (isConnected ? 'conn-online' : 'conn-offline')}`}
+          title={`Network status: ${isOffline ? 'Offline Mode Active' : localConnStatus}`}
+        >
+          <span className={`conn-dot ${isOffline ? 'dot-gray' : (isConnected ? 'dot-connected' : 'dot-reconnecting')}`} />
+          <span className="conn-text">
+            {isOffline ? 'Offline' : (isConnected ? 'Connected' : 'Reconnecting')}
+          </span>
+        </div>
       </div>
 
       {/* Main View: either Scanning View or Warning/Result Screen */}
       <div className="app-body">
+        {/* Offline Demo Toggle Bar */}
+        <div className="offline-control-bar">
+          <label className="offline-toggle-container" htmlFor="offline-demo-toggle">
+            <input
+              id="offline-demo-toggle"
+              type="checkbox"
+              className="offline-checkbox"
+              checked={isOffline}
+              onChange={(e) => handleToggleOffline(e.target.checked)}
+            />
+            <span className="toggle-switch-ui" />
+            <span className="toggle-switch-text">
+              {isOffline ? '✈️ Offline Mode (Edge Shield Active)' : 'Simulate offline'}
+            </span>
+          </label>
+        </div>
+
         {scanResult ? (
           <WarningScreen
             level={scanResult.level}
@@ -108,20 +178,31 @@ export default function DeviceB({
             secondsAgo={secondsAgo}
             vpa={scanResult.vpa}
             merchantName={scanResult.merchantName}
+            isOffline={isOffline}
             onReset={handleResetScan}
             onPay={() => alert('Processing payment...')}
           />
         ) : (
           <div className="scanner-view">
-            {/* Live Flag Notification Badge */}
-            {activeFlag && (
+            {/* Live Flag Notification Badge (if not offline or previously received) */}
+            {activeFlag && !isOffline && (
               <div className="live-broadcast-badge" role="status">
                 <span className="pulse-indicator-dot" />
                 <span className="badge-text">
                   Flag received in <strong>{activeFlag.latencySeconds || '2.0'}s</strong>
                 </span>
                 <span className="badge-level-pill" data-level={activeFlag.level}>
-                  {activeFlag.level === 'hard' ? '3x reports' : '1st report'}
+                  {activeFlag.level === 'hard' || (activeFlag.reports >= 3) ? `${activeFlag.reports || activeFlag.reportersCount} reports` : '1 report'}
+                </span>
+              </div>
+            )}
+
+            {/* Offline Notification Notice */}
+            {isOffline && (
+              <div className="offline-banner-notice">
+                <span className="plane-icon">✈️</span>
+                <span className="offline-notice-text">
+                  Device is offline. Verification runs 100% on-device via Bloom filter.
                 </span>
               </div>
             )}
@@ -135,7 +216,7 @@ export default function DeviceB({
 
               <div className={`laser-scanner-line ${simulatedScanning ? 'laser-active' : ''}`} />
 
-              {/* Same fake QR code visible in viewfinder */}
+              {/* Fake QR code visible in viewfinder */}
               <div className="viewfinder-target">
                 <svg className="qr-svg" viewBox="0 0 140 140" width="130" height="130">
                   <rect width="140" height="140" fill="#ffffff" rx="10" />
@@ -171,7 +252,7 @@ export default function DeviceB({
 
             {/* Merchant Preview */}
             <div className="target-merchant-info">
-              <span className="target-label">Detected Target:</span>
+              <span className="target-label">Target:</span>
               <span className="target-name">Fake Shop • scammer@upi</span>
             </div>
 
@@ -184,7 +265,7 @@ export default function DeviceB({
                 disabled={simulatedScanning}
               >
                 {simulatedScanning ? (
-                  <span className="btn-spinner">Analyzing QR &amp; Bloom Filter...</span>
+                  <span className="btn-spinner">Verifying Bloom Filter locally...</span>
                 ) : (
                   <>
                     <span className="btn-icon">📷</span>

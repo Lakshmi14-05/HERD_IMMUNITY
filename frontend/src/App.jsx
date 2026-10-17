@@ -4,24 +4,56 @@ import DeviceA from './components/DeviceA';
 import DeviceB from './components/DeviceB';
 import NetworkBroadcast from './components/NetworkBroadcast';
 import { networkService } from './services/socket';
-import { IS_MOCK } from './config';
+import { fetchFlags, ensureBackendAwake } from './services/api';
+import { IS_MOCK, API_URL } from './config';
 import './App.css';
 
 export default function App() {
   const [activeFlag, setActiveFlag] = useState(null);
   const [isBroadcasting, setIsBroadcasting] = useState(false);
   const [totalReports, setTotalReports] = useState(0);
+  const [connectionStatus, setConnectionStatus] = useState(networkService.getConnectionStatus());
+  const [isBackendWakingUp, setIsBackendWakingUp] = useState(false);
 
   useEffect(() => {
-    // Listen for broadcast start (shows immediate transmitting indicator)
+    // Requirement 2: Backend waking up check for sleeping Render free tier (only when VITE_MOCK=false)
+    if (!IS_MOCK) {
+      ensureBackendAwake(
+        (isWaking) => setIsBackendWakingUp(isWaking),
+        () => {
+          setIsBackendWakingUp(false);
+          // Backend is awake: connect socket and fetch flags
+          networkService.connectSocket();
+          fetchFlags().then((flags) => {
+            if (Array.isArray(flags) && flags.length > 0) {
+              setTotalReports(flags.length);
+            }
+          });
+        }
+      );
+    } else {
+      // Mock mode: immediate initial setup
+      fetchFlags().then((flags) => {
+        if (Array.isArray(flags) && flags.length > 0) {
+          setTotalReports(flags.length);
+        }
+      });
+    }
+
+    // Listen for socket connection status
+    const unsubConn = networkService.on('connection_status', (status) => {
+      setConnectionStatus(status);
+    });
+
+    // Listen for broadcast start
     const unsubStart = networkService.on('network_transmit_start', () => {
       setIsBroadcasting(true);
     });
 
-    // Listen for arrival on Device B (after 2s mock delay or socket push)
-    const unsubBroadcast = networkService.on('flag_broadcast', (flagData) => {
+    // Listen for incoming flags (Socket.IO "flag" event or mock broadcast)
+    const unsubFlag = networkService.on('flag', (flagData) => {
       setActiveFlag(flagData);
-      setTotalReports(flagData.reportersCount);
+      setTotalReports(flagData.reports || flagData.reportersCount || 1);
       setIsBroadcasting(false);
     });
 
@@ -33,19 +65,34 @@ export default function App() {
     });
 
     return () => {
+      unsubConn();
       unsubStart();
-      unsubBroadcast();
+      unsubFlag();
       unsubReset();
     };
   }, []);
 
   const handleDeviceAReported = (result) => {
-    // Device A triggered report
-    console.log('[App] Device A report triggered:', result);
+    if (result && result.hash) {
+      networkService.markPendingReport(result.hash);
+    }
   };
 
   return (
     <div className="demo-canvas">
+      {/* Requirement 2: Render Free-tier Wake-up Banner */}
+      {isBackendWakingUp && (
+        <div className="waking-up-banner" role="status">
+          <div className="waking-spinner" />
+          <div className="waking-content">
+            <strong className="waking-title">Backend waking up, please wait...</strong>
+            <span className="waking-sub">
+              Render free tier spins down on idle. Awakening server and establishing socket connection...
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* Background ambient lighting and cyber grid */}
       <div className="ambient-glow glow-1" />
       <div className="ambient-glow glow-2" />
@@ -57,7 +104,8 @@ export default function App() {
           <span className="shield-icon">🛡️</span>
           <span className="badge-text">Hackathon Live Demo</span>
           <span className="status-indicator-live">
-            <span className="blinking-dot" /> LIVE P2P
+            <span className={`blinking-dot ${connectionStatus === 'connected' ? 'dot-green' : (connectionStatus === 'offline' ? 'dot-gray' : 'dot-orange')}`} />
+            {IS_MOCK ? 'MOCK MODE' : `LIVE (${connectionStatus.toUpperCase()})`}
           </span>
         </div>
 
@@ -68,16 +116,16 @@ export default function App() {
 
         <div className="stats-strip">
           <div className="stat-pill">
-            <span className="stat-label">Network Mode:</span>
-            <span className="stat-value highlight">{IS_MOCK ? 'Simulated P2P Mesh (VITE_MOCK=true)' : 'Live Backend Socket'}</span>
+            <span className="stat-label">Backend URL:</span>
+            <span className="stat-value highlight">{API_URL}</span>
+          </div>
+          <div className="stat-pill">
+            <span className="stat-label">Mode:</span>
+            <span className="stat-value">{IS_MOCK ? 'Simulated P2P (VITE_MOCK=true)' : 'Live Backend (VITE_MOCK=false)'}</span>
           </div>
           <div className="stat-pill">
             <span className="stat-label">Active Flags:</span>
             <span className="stat-value">{totalReports}</span>
-          </div>
-          <div className="stat-pill">
-            <span className="stat-label">Verification Time:</span>
-            <span className="stat-value">&lt; 1 ms (Bloom Filter)</span>
           </div>
         </div>
       </header>
@@ -109,12 +157,13 @@ export default function App() {
           <PhoneFrame
             deviceName="Device B"
             roleName="Victim B"
-            statusTag={activeFlag ? `Alert: ${activeFlag.level.toUpperCase()}` : 'Ready to Scan'}
-            statusType={activeFlag ? (activeFlag.level === 'hard' ? 'danger' : 'warning') : 'normal'}
+            statusTag={activeFlag ? `Alert: ${activeFlag.level.toUpperCase()}` : (connectionStatus === 'connected' ? 'Ready to Scan' : (connectionStatus === 'offline' ? 'Offline Edge' : 'Reconnecting'))}
+            statusType={activeFlag ? (activeFlag.level === 'hard' ? 'danger' : 'warning') : (connectionStatus === 'offline' ? 'normal' : 'normal')}
           >
             <DeviceB
               activeFlag={activeFlag}
-              onResetAll={() => networkService.resetMock()}
+              connectionStatus={connectionStatus}
+              onResetAll={() => networkService.resetState()}
             />
           </PhoneFrame>
         </section>
@@ -124,12 +173,12 @@ export default function App() {
       <footer className="demo-footer">
         <div className="footer-architecture-pills">
           <span className="arch-pill">🔒 Web Crypto SHA-256</span>
-          <span className="arch-pill">⚡ Bloom Filters (Zero-Latency)</span>
-          <span className="arch-pill">📡 Socket.io / Event Mesh</span>
-          <span className="arch-pill">📱 React 18 + Vite</span>
+          <span className="arch-pill">⚡ Bloom Filter (50KB / 7 Hashes)</span>
+          <span className="arch-pill">📡 Socket.IO Real-Time Sync</span>
+          <span className="arch-pill">🛡️ Zero-Network Edge Verification</span>
         </div>
         <p className="footer-note">
-          Herd Immunity Demo • Frontend isolated in <code>/frontend</code> • Ready for backend integration
+          Herd Immunity Demo • Frontend isolated in <code>/frontend</code> • Ready for Live Screen Recording
         </p>
       </footer>
     </div>

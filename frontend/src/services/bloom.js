@@ -1,17 +1,11 @@
 /**
- * Custom Lightweight On-Device Bloom Filter Service
- * Pure JavaScript & TypedArray (Uint8Array) implementation.
- * Zero external dependencies — 100% browser & web-worker native.
- *
- * Specifications:
- * - 400,000 bits (50,000 bytes = ~50KB)
- * - 7 hash functions computed via Double Hashing:
- *     gi(x) = (h1(x) + i * h2(x)) mod M
- * - Fast 32-bit FNV-1a and Murmur-style hashes
- * - Metadata storage Map: hash -> { level, reports, ts }
+ * Bloom Filter Service (~50KB Uint8Array bit array, 7 hash functions)
+ * Double hashing: gi(x) = (h1(x) + i * h2(x)) mod M
+ * Methods: add(hash), has(hash)
+ * Keeps a Map: hash -> { level, reports, ts }
  */
 
-// 32-bit FNV-1a hash
+// 32-bit FNV-1a
 function fnv1a(str) {
   let hash = 0x811c9dc5;
   for (let i = 0; i < str.length; i++) {
@@ -21,7 +15,7 @@ function fnv1a(str) {
   return hash >>> 0;
 }
 
-// 32-bit Murmur-style hash
+// 32-bit Murmur32-style
 function murmur32(str) {
   let hash = 0x9747b28c;
   for (let i = 0; i < str.length; i++) {
@@ -29,7 +23,6 @@ function murmur32(str) {
     k = Math.imul(k, 0xcc9e2d51);
     k = (k << 15) | (k >>> 17);
     k = Math.imul(k, 0x1b873593);
-
     hash ^= k;
     hash = (hash << 13) | (hash >>> 19);
     hash = (Math.imul(hash, 5) + 0xe6546b64) | 0;
@@ -45,31 +38,20 @@ function murmur32(str) {
 
 export class BloomFilter {
   /**
-   * @param {number} sizeBits - Number of bits in the bitset (default 400,000 bits ≈ 50KB)
-   * @param {number} numHashes - Number of hash iterations (default 7)
+   * @param {number} sizeBits - 400,000 bits (50,000 bytes = ~50KB)
+   * @param {number} numHashes - 7 hash functions
    */
   constructor(sizeBits = 400000, numHashes = 7) {
     this.sizeBits = sizeBits;
     this.numHashes = numHashes;
-    const numBytes = Math.ceil(sizeBits / 8);
-    this.bits = new Uint8Array(numBytes);
-    // Map for hash -> { level, reports, ts }
-    this.metadata = new Map();
+    this.bits = new Uint8Array(Math.ceil(sizeBits / 8));
   }
 
   /**
-   * Static factory method to maintain API compatibility
+   * Adds a lowercase hex hash to the Bloom filter
+   * @param {string} hash 
    */
-  static create(size = 2000, falsePositiveRate = 0.001) {
-    return new BloomFilter(400000, 7);
-  }
-
-  /**
-   * Add a string hash to the filter with optional metadata
-   * @param {string} hash
-   * @param {object} meta - { level, reports, ts }
-   */
-  add(hash, meta = null) {
+  add(hash) {
     if (!hash) return;
     const key = String(hash).trim().toLowerCase();
     const h1 = fnv1a(key);
@@ -82,19 +64,11 @@ export class BloomFilter {
       const bitOffset = bitIndex & 7;
       this.bits[byteIndex] |= (1 << bitOffset);
     }
-
-    if (meta) {
-      this.metadata.set(key, {
-        level: meta.level || 'soft',
-        reports: meta.reports || 1,
-        ts: meta.ts || Date.now()
-      });
-    }
   }
 
   /**
-   * Check if hash is probably in the filter
-   * @param {string} hash
+   * Checks if hash is in the Bloom filter
+   * @param {string} hash 
    * @returns {boolean}
    */
   has(hash) {
@@ -115,104 +89,75 @@ export class BloomFilter {
     return true;
   }
 
-  /**
-   * Get metadata associated with a hash
-   * @param {string} hash
-   * @returns {object|null}
-   */
-  getMeta(hash) {
-    if (!hash) return null;
-    const key = String(hash).trim().toLowerCase();
-    return this.metadata.get(key) || null;
-  }
-
-  /**
-   * Serializes filter to JSON
-   */
-  saveAsJSON() {
-    return {
-      type: 'BloomFilter',
-      sizeBits: this.sizeBits,
-      numHashes: this.numHashes,
-      bits: Array.from(this.bits),
-      metadata: Array.from(this.metadata.entries())
-    };
-  }
-
-  /**
-   * Reconstitutes filter from JSON
-   */
-  static fromJSON(json) {
-    if (!json) return new BloomFilter();
-    const filter = new BloomFilter(json.sizeBits || 400000, json.numHashes || 7);
-    if (json.bits && Array.isArray(json.bits)) {
-      filter.bits.set(json.bits);
-    }
-    if (json.metadata && Array.isArray(json.metadata)) {
-      filter.metadata = new Map(json.metadata);
-    }
-    return filter;
+  clear() {
+    this.bits.fill(0);
   }
 }
 
-/**
- * Global map for hash -> { level, reports, ts }
- */
-export const hashMetadataMap = new Map();
+// Global Map: hash -> { level, reports, ts }
+export const hashDetailsMap = new Map();
 
-/**
- * Creates an empty Bloom filter
- */
-export function createBloomFilter(size = 2000, falsePositiveRate = 0.001) {
-  return new BloomFilter(400000, 7);
-}
-
-/**
- * Adds a hashed VPA to the filter and metadata store
- */
-export function addHashToFilter(filter, hash, meta = null) {
-  if (!filter || !hash) return;
-  filter.add(hash, meta);
-  if (meta) {
-    hashMetadataMap.set(String(hash).toLowerCase(), meta);
-  }
-}
-
-/**
- * Checks if a hashed VPA exists in the bloom filter
- */
-export function hasHashInFilter(filter, hash) {
-  if (!filter || !hash) return false;
-  return filter.has(hash);
-}
-
-/**
- * Retrieves metadata for a hash from filter or global map
- */
-export function getHashMeta(filter, hash) {
-  if (!hash) return null;
-  const key = String(hash).toLowerCase();
-  if (filter && typeof filter.getMeta === 'function') {
-    const meta = filter.getMeta(key);
-    if (meta) return meta;
-  }
-  return hashMetadataMap.get(key) || null;
-}
-
-/**
- * Serializes bloom filter to JSON
- */
-export function exportFilter(filter) {
-  if (!filter || typeof filter.saveAsJSON !== 'function') return null;
-  return filter.saveAsJSON();
-}
-
-/**
- * Reconstitutes bloom filter from serialized JSON
- */
-export function importFilter(json) {
-  return BloomFilter.fromJSON(json);
-}
-
-// Global edge filter instance representing Victim B's local on-device filter cache
+// Default on-device Bloom filter singleton
 export const localDeviceBloom = new BloomFilter(400000, 7);
+
+/**
+ * Register or update a flag in both the Bloom filter and the details Map
+ * @param {string} hash 
+ * @param {{ level: 'soft'|'hard', reports: number, ts: number }} details 
+ */
+export function addFlag(hash, details = null) {
+  if (!hash) return;
+  const key = String(hash).trim().toLowerCase();
+  localDeviceBloom.add(key);
+
+  if (details) {
+    hashDetailsMap.set(key, {
+      level: details.level || 'soft',
+      reports: Number(details.reports || 1),
+      ts: Number(details.ts || Math.floor(Date.now() / 1000))
+    });
+  }
+}
+
+/**
+ * Check if a hash is flagged in the Bloom filter
+ * @param {string} hash 
+ * @returns {boolean}
+ */
+export function hasFlag(hash) {
+  if (!hash) return false;
+  return localDeviceBloom.has(String(hash).trim().toLowerCase());
+}
+
+/**
+ * Get details for a flagged hash from the Map
+ * @param {string} hash 
+ * @returns {{ level: 'soft'|'hard', reports: number, ts: number }|null}
+ */
+export function getFlagDetails(hash) {
+  if (!hash) return null;
+  return hashDetailsMap.get(String(hash).trim().toLowerCase()) || null;
+}
+
+/**
+ * Reset both Bloom filter and Map
+ */
+export function resetBloomStorage() {
+  localDeviceBloom.clear();
+  hashDetailsMap.clear();
+}
+
+// Compatibility wrappers for existing components
+export const addHashToFilter = (filter, hash, meta) => {
+  if (filter && typeof filter.add === 'function') filter.add(hash);
+  else localDeviceBloom.add(hash);
+  if (meta && hash) {
+    hashDetailsMap.set(String(hash).trim().toLowerCase(), meta);
+  }
+};
+export const hasHashInFilter = (filter, hash) => {
+  if (filter && typeof filter.has === 'function') return filter.has(hash);
+  return localDeviceBloom.has(hash);
+};
+export const createBloomFilter = () => new BloomFilter(400000, 7);
+export const hashMetadataMap = hashDetailsMap;
