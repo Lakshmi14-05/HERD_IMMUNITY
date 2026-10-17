@@ -15,6 +15,9 @@ if (config.USE_MOCK_REDIS) {
   const redisOptions = {
     maxRetriesPerRequest: null,
     enableReadyCheck: true,
+    ...(config.REDIS_URL && config.REDIS_URL.startsWith('rediss://')
+      ? { tls: { rejectUnauthorized: false } }
+      : {}),
   };
   console.log(
     '[Redis] Connecting to Upstash/Redis at',
