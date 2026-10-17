@@ -31,15 +31,13 @@ export default function NetworkBroadcast({ isBroadcasting, reportCount = 0 }) {
     };
   }, []);
 
-  const handleSimulateThree = () => {
-    networkService.simulateThreeReports({
-      vpa: 'scammer@upi',
-      upiString: 'upi://pay?pa=scammer@upi&pn=Fake%20Shop'
-    });
+  const handleSimulateThree = async () => {
+    const rawQr = 'upi://pay?pa=scammer@upi&pn=Fake%20Shop';
+    networkService.simulateThreeReports(rawQr);
   };
 
   const handleResetDemo = () => {
-    networkService.resetMock();
+    networkService.resetState();
   };
 
   return (
