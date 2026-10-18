@@ -220,8 +220,5 @@ This is a **working prototype / proof of concept**. It demonstrates the core mec
 | **Manaswini** | Frontend (React UI, QR upload and scan, Bloom filter, live socket updates) |
 | **<Lakshmi sai sri>** ([@Lakshmi14-05](https://github.com/Lakshmi14-05)) | Backend (API, Redis Pub/Sub, Socket.IO, confidence logic) |
 
-Built for **<CodeNoir>**.
+Built for **CodeNoir**
 
-## 📄 License
-
-MIT. See `LICENSE` (add one if you want this repo to be open source).
